@@ -1,0 +1,31 @@
+Write the foundational codebase for a new, lightweight CLI-based web browser named "Husk". This browser is designed for extremely low-end devices and terminal environments. It should fetch web pages, parse the HTML/DOM in the background, and render a clean, interactive text-based interface in the terminal.
+
+### 1. Architecture & Tech Stack
+*   **Language:** Node.js (modern ES6+ syntax).
+*   **Virtual DOM & Parsing:** Use `jsdom` to fetch URLs, execute basic JavaScript within a sandbox, and parse the DOM structure.
+*   **TUI Framework:** Use `blessed` (or `blessed-contrib` / `ink`) to handle the terminal grid, layouts, and keyboard/mouse events.
+*   **Styling:** Parse basic HTML tags (<b>, <i>, <a>, <h1>) and inline CSS colors, converting them into standard ANSI escape codes for the terminal.
+
+### 2. Core Features Required in the Prototype
+*   **The Layout:** 
+    *   A top bar: For URL input and status messages (e.g., "Loading...").
+    *   A main viewport: A scrollable box that displays the parsed, word-wrapped text of the website.
+    *   A bottom bar: Showing keyboard shortcuts (e.g., "CTRL+C to quit, / to focus URL bar").
+*   **Smart Rendering:** Strip out all `<script>`, `<style>`, `<svg>`, and `<nav>` bloat. Only render the actual readable content (paragraphs, headings, lists, tables).
+*   **Cursor-Based Navigation:** Implement a visual cursor (e.g., a highlighted background or a `>` symbol) inside the main viewport. The user should be able to move this cursor smoothly between clickable elements (like links and buttons) using the Up and Down arrow keys. 
+*   **Interaction:** When the cursor is focused on a link and the user presses Enter, the app should extract the `href` value, fetch the new page, re-run the JSDOM parsing, and update the main viewport seamlessly.
+
+### 3. Implementation Guidelines
+*   Do not write a monolithic single file. Structure the code logically (e.g., `index.js` for app entry, `parser.js` for JSDOM logic, `ui.js` for the TUI components and cursor state).
+*   Handle errors gracefully (e.g., invalid URLs, 404 pages, or network timeouts) and display the error in the main viewport.
+*   Keep performance in mind. The rendering function should not block the main thread unnecessarily.
+
+### 4. Version Control & GitHub CLI (gh) Integration
+*   After generating and saving the local files, use your terminal execution capabilities to push this codebase to my GitHub repository.
+*   Execute the following steps via bash/terminal:
+    1. Initialize a local git repository (`git init`).
+    2. Add all created files (`git add .`).
+    3. Commit the changes (`git commit -m "Initial commit: Husk CLI Browser prototype"`).
+    4. Link to the remote repository using GitHub CLI or Git: `git remote add origin https://github.com/kyrtstn/husk.git`
+    5. Push the code to the main branch (`git push -u origin main` or `master`). 
+*   If the remote repository needs to be created first, use `gh repo create kyrtstn/husk --public --source=. --remote=origin --push`.
