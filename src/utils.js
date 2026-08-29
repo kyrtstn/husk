@@ -2,23 +2,43 @@ export function normalizeUrl(input) {
   if (!input) return null;
   let url = input.trim();
   if (!url) return null;
-  if (!/^https?:\/\//i.test(url)) {
-    if (/^[a-zA-Z0-9.-]+\.[a-z]{2,}/.test(url) || url.startsWith("localhost")) {
-      url = "https://" + url;
-    } else {
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      return new URL(url).href;
+    } catch {
       return null;
     }
   }
-  try {
-    const u = new URL(url);
-    return u.href;
-  } catch {
-    return null;
+  // If looks like domain/path without protocol
+  if (/^[a-zA-Z0-9.-]+\.[a-z]{2,}(\/.*)?$/.test(url) || url.startsWith("localhost") || url.startsWith("127.") || url.startsWith("192.")) {
+    try {
+      return new URL("https://" + url).href;
+    } catch {
+      return null;
+    }
   }
+  // Otherwise treat as search query → use DuckDuckGo Lite (fast, low JS, good for low-end)
+  // Caller can use buildSearchUrl if they want to detect query case; but here we return null to signal search.
+  return null;
 }
 
 export function isValidUrl(str) {
   return normalizeUrl(str) !== null;
+}
+
+export function buildSearchUrl(query) {
+  if (!query) return null;
+  const q = query.trim();
+  if (!q) return null;
+  // If it's already a URL, use it
+  const asUrl = normalizeUrl(q);
+  if (asUrl) return asUrl;
+  // Else DuckDuckGo Lite search
+  return `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`;
+}
+
+export function looksLikeUrl(input) {
+  return !!normalizeUrl(input);
 }
 
 export function wordWrap(text, width) {
