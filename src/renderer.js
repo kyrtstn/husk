@@ -1,4 +1,4 @@
-import { wordWrap } from "./utils.js";
+import { wordWrap, cssColorToBlessed } from "./utils.js";
 
 function escapeBlessed(str) {
   return String(str).replace(/\{/g, "\\{").replace(/\}/g, "\\}");
@@ -41,12 +41,14 @@ function styleClose(p) {
 
 function linkTags(isFocused, p) {
   if (isFocused) {
-    // High contrast cursor: yellow bg black fg bold + inverse for visibility on any bg
     return { open: "{yellow-bg}{black-fg}{bold}", close: "{/bold}{/black-fg}{/yellow-bg}" };
   }
-  // Use site's actual color if available, otherwise pleasant blue
-  const fg = p.style?.fg || p.color || "#1a73e8";
-  // Ensure we use hex if provided, blessed will match to nearest
+  let fg = p.style?.fg || p.color || "26";
+  if (fg && fg.startsWith("#")) {
+    const conv = cssColorToBlessed(fg);
+    if (conv) fg = conv;
+    else fg = "26";
+  }
   return { open: `{underline}{${fg}-fg}`, close: `{/${fg}-fg}{/underline}` };
 }
 
