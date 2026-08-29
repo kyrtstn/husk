@@ -49,7 +49,7 @@ async function loadUrl(input, { isBack = false } = {}) {
     }
     // Non-blocking parse: yield to event loop
     await new Promise((r) => setImmediate(r));
-    const nodes = parseHTML(html, finalUrl);
+    const nodes = await parseHTML(html, finalUrl);
 
     if (!isBack) {
       ui.setContent(nodes, finalUrl);

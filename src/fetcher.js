@@ -99,6 +99,40 @@ export async function fetchPage(url, { timeout = DEFAULT_TIMEOUT } = {}) {
   }
 }
 
+export async function fetchCss(href, baseUrl, { timeout = 4000 } = {}) {
+  let url = href;
+  try { url = new URL(href, baseUrl).href; } catch { return null; }
+  if (url.startsWith("data:")) return null;
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { "User-Agent": USER_AGENT, Accept: "text/css,*/*;q=0.1", "Accept-Language": "en-US,en;q=0.9" },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > 30*1024) return null;
+    let text = new TextDecoder("utf-8").decode(buf);
+    if (!text || text.length < 10) return null;
+    if (!text.includes("{")) return null;
+    // Strip modern at-rules that JSDOM can't parse and cause error
+    if (text.length > 30*1024) text = text.slice(0, 30*1024);
+    // Remove @layer, @container, @scope which break rrweb-cssom
+    text = text.replace(/@layer[^{]*\{[^}]*\}/g, "").replace(/@container[^{]*\{[^}]*\}/g, "");
+    return text;
+  } catch { return null; } finally { clearTimeout(id); }
+}
+
+export async function fetchAllCss(linkHrefs, baseUrl) {
+  if (!linkHrefs || linkHrefs.length===0) return [];
+  const limit = 2;
+  const sliced = linkHrefs.slice(0, limit);
+  const results = await Promise.allSettled(sliced.map(h=> fetchCss(h, baseUrl, { timeout: 3500 })));
+  return results.filter(r=> r.status==="fulfilled" && r.value).map(r=> r.value);
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
