@@ -33,6 +33,16 @@ function isHidden(el) {
   return false;
 }
 
+function extractMeta(doc) {
+  const title = (doc.querySelector("title")?.textContent || "").trim().slice(0,120);
+  const desc = (doc.querySelector('meta[name="description"]')?.getAttribute("content") || doc.querySelector('meta[property="og:description"]')?.getAttribute("content") || "").trim().slice(0,220);
+  const ogImage = doc.querySelector('meta[property="og:image"]')?.getAttribute("content") || "";
+  return { title, desc, ogImage };
+}
+
+const INLINE_TAGS = new Set(["a","b","strong","i","em","cite","u","code","span","font","label","small","abbr","mark","time","img","br","input","textarea","button","select","q","kbd","samp","var","sub","sup","s","strike","del","ins"]);
+function isInlineTag(tag){ return INLINE_TAGS.has(tag); }
+
 export function parseHTML(html, baseUrl) {
   const dom = new JSDOM(html, {
     url: baseUrl,
@@ -50,33 +60,42 @@ export function parseHTML(html, baseUrl) {
   const baseTag = doc.querySelector("base[href]");
   const effectiveBase = baseTag ? new URL(baseTag.getAttribute("href"), baseUrl).href : baseUrl;
 
+  // Detect challenge / bot pages early
+  const titleText = (doc.querySelector("title")?.textContent || "").toLowerCase();
+  const bodyTextLower = (doc.body?.textContent || "").toLowerCase();
+  const isChallenge = titleText.includes("just a moment") || titleText.includes("attention required") || bodyTextLower.includes("cf-challenge") || bodyTextLower.includes("anomaly-modal") || bodyTextLower.includes("please turn javascript on");
+  if (isChallenge) {
+    // Return special challenge node instead of empty
+  }
+
   // Heuristic: find main content container by scoring text length
   const candidates = [
     doc.querySelector("main"),
     doc.querySelector("article"),
     doc.querySelector("[role=main]"),
     doc.querySelector("#content"),
+    doc.querySelector("#mw-content-text"),
     doc.querySelector("#main"),
     doc.querySelector(".content"),
     doc.querySelector("#primary"),
     doc.body,
   ].filter(Boolean);
 
-  // Also score all divs with >500 chars
-  const extra = [...doc.querySelectorAll("div, section, article, main")].filter((el) => {
+  // Also score all divs/sections with >500 chars, but filter out nav-heavy sidebars later via penalty
+  const extra = [...doc.querySelectorAll("div, section, article, main, react-app")].filter((el) => {
     const len = getVisibleText(el).length;
     return len > 600 && len < 40000;
   });
-  for (const e of extra.slice(0, 8)) if (!candidates.includes(e)) candidates.push(e);
+  for (const e of extra.slice(0, 10)) if (!candidates.includes(e)) candidates.push(e);
 
   let root = doc.body;
   let bestScore = -1;
   for (const c of candidates) {
     const txtLen = getVisibleText(c).length;
     const linkCount = c.querySelectorAll("a").length;
-    // Score: text length minus link penalty (nav-heavy penalized), plus bonus for semantic tags
-    const isSemantic = /^(MAIN|ARTICLE)$/.test(c.tagName) || c.getAttribute("role") === "main";
-    const score = txtLen - linkCount * 20 + (isSemantic ? 500 : 0);
+    const isSemantic = /^(MAIN|ARTICLE)$/.test(c.tagName) || c.getAttribute("role") === "main" || c.id === "mw-content-text" || c.id === "content";
+    const linkPenalty = isSemantic ? 10 : 25;
+    const score = txtLen - linkCount * linkPenalty + (isSemantic ? 4000 : 0);
     if (score > bestScore) {
       bestScore = score;
       root = c;
@@ -84,7 +103,18 @@ export function parseHTML(html, baseUrl) {
   }
   if (!root) root = doc.body;
 
+  const meta = extractMeta(doc);
   const nodes = [];
+  // Inject beautiful title/desc as first nodes if available and not inside root's heading already
+  if (meta.title) {
+    nodes.push({ type: "siteHeader", text: meta.title, desc: meta.desc, url: baseUrl });
+  }
+  // If challenge detected, inject helpful card
+  const lowerTitle = (meta.title||"").toLowerCase();
+  const isBlocked = lowerTitle.includes("just a moment") || lowerTitle.includes("attention required") || html.toLowerCase().includes("anomaly-modal");
+  if (isBlocked) {
+    nodes.push({ type: "challenge", text: "This site is protected by Cloudflare / bot protection and requires JavaScript.", url: baseUrl });
+  }
   let linkId = 0;
 
   function pushNode(n) {
@@ -291,24 +321,6 @@ export function parseHTML(html, baseUrl) {
         }
         break;
       }
-      case "table": {
-        const rows = [];
-        for (const tr of el.querySelectorAll("tr")) {
-          const cells = [...tr.querySelectorAll("th, td")].map((c) => {
-            const inl = decomposeInline(c, inlineColor);
-            if (inl.length) return inl.map((p) => p.text).join(" ");
-            return getVisibleText(c);
-          });
-          if (cells.some((c) => c)) rows.push(cells);
-        }
-        if (rows.length) pushNode({ type: "table", rows });
-        else {
-          // fallback: text
-          const t = getVisibleText(el);
-          if (t) pushNode({ type: "paragraph", text: t, color: inlineColor });
-        }
-        break;
-      }
       case "br": {
         pushNode({ type: "paragraph", text: "" });
         break;
@@ -334,26 +346,105 @@ export function parseHTML(html, baseUrl) {
       case "summary":
       case "center":
       case "td":
-      case "th": {
+      case "th":
+      case "react-app":
+      case "main-app":
+      case "app": {
         // For containers: if they have block children, recurse; else treat as paragraph with inline.
-        const blockTags = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "table", "blockquote", "pre", "div", "section", "article", "aside", "figure", "hr", "header", "footer", "nav", "form"]);
-        const hasBlockChild = [...el.children].some((c) => blockTags.has(c.tagName.toLowerCase()));
-        if (hasBlockChild) {
+        // Use inlineTag check: any non-inline child counts as block container
+        const hasBlockChild = [...el.children].some((c) => !isInlineTag(c.tagName.toLowerCase()));
+        // Special: tables/center/react-app always considered block containers even if heuristic misses
+        const alwaysBlock = ["div","section","article","main","aside","figure","header","footer","nav","center","table","tbody","thead","tfoot","tr","body","react-app","main-app","app"].includes(tag);
+        if ((hasBlockChild || alwaysBlock) && el.children.length>0) {
+          // For large mega-divs that would otherwise collapse to single paragraph, force split if text huge
+          // But still recurse to preserve cards
           for (const child of [...el.children]) walk(child);
-          // Also capture stray text nodes directly in container that have links? Already handled via block recursion but check:
-          const strayLinks = [...el.childNodes].filter((n) => n.nodeType === 1 && n.tagName.toLowerCase() === "a");
-          // Walk already handled via children, so nothing extra
         } else {
           const inline = decomposeInline(el, inlineColor);
           if (inline.length) {
-            // Only push if not empty and not just whitespace and contains meaningful content
             const txtJoin = inline.map((p) => p.text).join(" ").trim();
             if (txtJoin) pushNode({ type: "paragraph", inline });
           } else {
             const t = getVisibleText(el);
             if (t) pushNode({ type: "paragraph", text: t, color: inlineColor });
           }
-          // Recurse for any nested block that wasn't captured? Already captured via inline, but ensure children not double-counted
+        }
+        break;
+      }
+      case "table":
+      case "tbody":
+      case "thead":
+      case "tfoot": {
+        const isInsideCenter = !!el.closest("center");
+        const allTrs = [...el.querySelectorAll("tr")].slice(0,120);
+        const isLayout = isInsideCenter || (allTrs.length>8 && !el.querySelector("th"));
+        if(isLayout && allTrs.length>3){
+          let emitted=0;
+          for(const tr of allTrs){
+            if(isHidden(tr)) continue;
+            const inline = decomposeInline(tr, inlineColor);
+            let effectiveInline = inline;
+            if(effectiveInline.length===0){
+              for(const td of tr.querySelectorAll("td")){
+                const tdInline = decomposeInline(td, inlineColor);
+                if(tdInline.length) effectiveInline.push(...tdInline);
+              }
+            }
+            if(effectiveInline.length){
+              const txt = effectiveInline.map(p=>p.text).join(" ").trim();
+              if(txt.length>10){
+                pushNode({ type: "paragraph", inline: effectiveInline });
+                emitted++;
+                if(emitted>60) break;
+              }
+            }
+          }
+          if(emitted>0) break;
+        }
+        // DEBUG
+        // console.log("TABLE debug", el.tagName, allTrs.length, el.querySelector("th")? "has th":"no th");
+        const rows = [];
+        for (const tr of el.querySelectorAll(":scope > tr, :scope > thead > tr, :scope > tbody > tr, :scope > tfoot > tr")) {
+          const cells = [...tr.children].filter(c=> ["td","th"].includes(c.tagName.toLowerCase())).map((c) => {
+            const inl = decomposeInline(c, inlineColor);
+            if (inl.length) return inl.map((p) => p.text).join(" ");
+            return getVisibleText(c);
+          });
+          if (cells.some((c) => c)) rows.push(cells);
+        }
+        if (rows.length===0){
+          for (const tr of el.querySelectorAll("tr")) {
+            const cells = [...tr.querySelectorAll("th, td")].map((c) => {
+              const inl = decomposeInline(c, inlineColor);
+              if (inl.length) return inl.map((p) => p.text).join(" ");
+              return getVisibleText(c);
+            });
+            if (cells.some((c) => c)) rows.push(cells);
+          }
+        }
+        if (rows.length && rows.length<60) {
+          pushNode({ type: "table", rows });
+        } else if (rows.length) {
+          for(let i=0;i<rows.length;i+=20){
+            pushNode({ type: "table", rows: rows.slice(i,i+20) });
+          }
+        } else {
+          const inline = decomposeInline(el, inlineColor);
+          if(inline.length) pushNode({ type:"paragraph", inline });
+          else {
+            const t = getVisibleText(el);
+            if (t) pushNode({ type: "paragraph", text: t, color: inlineColor });
+          }
+        }
+        break;
+      }
+      case "tr": {
+        // Standalone row (when table already handled, ignore)
+        const cells = [...el.children].filter(c=> ["td","th"].includes(c.tagName.toLowerCase())).map(c=> getVisibleText(c));
+        if(cells.some(c=>c)) pushNode({ type: "table", rows:[cells] });
+        else {
+          const inline=decomposeInline(el, inlineColor);
+          if(inline.length) pushNode({type:"paragraph", inline});
         }
         break;
       }
@@ -382,13 +473,14 @@ export function parseHTML(html, baseUrl) {
 
   walk(root);
 
-  // If root produced no nodes (empty article etc), fallback walk body comprehensively
-  if (nodes.length === 0 && root !== doc.body) {
+  const hasContent = nodes.some(n=> n.type!=="siteHeader" && n.type!=="challenge");
+  // If root produced no real nodes (only header), fallback walk body comprehensively
+  if (!hasContent && root !== doc.body) {
     for (const child of [...doc.body.children]) walk(child);
   }
 
   // If still empty, last resort: extract all <a> as paragraph links plus text chunks
-  if (nodes.length === 0) {
+  if (!nodes.some(n=> n.type!=="siteHeader" && n.type!=="challenge")) {
     const allLinks = [...doc.querySelectorAll("a[href]")].slice(0, 100).map((a) => {
       const href = resolveHref(a.getAttribute("href"), effectiveBase);
       const text = getVisibleText(a);
@@ -407,12 +499,16 @@ export function parseHTML(html, baseUrl) {
   const filtered = [];
   let prevText = "";
   for (const n of nodes) {
+    // Keep structural nodes that don't have text (tables, hrs, headers)
+    if (n.type === "table" || n.type === "hr" || n.type === "siteHeader" || n.type === "challenge") {
+      filtered.push(n);
+      continue;
+    }
     let txt = n.text || (n.inline ? n.inline.map((p) => p.text).join(" ") : "");
-    txt = txt.trim();
+    if (n.type === "table" && n.rows) txt = n.rows.flat().join(" ");
+    txt = (txt || "").trim();
     if (!txt) continue;
-    // Skip if duplicate of previous (exact)
     if (txt === prevText) continue;
-    // Merge duplicate headings etc.
     prevText = txt;
     filtered.push(n);
   }

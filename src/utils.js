@@ -30,11 +30,10 @@ export function buildSearchUrl(query) {
   if (!query) return null;
   const q = query.trim();
   if (!q) return null;
-  // If it's already a URL, use it
   const asUrl = normalizeUrl(q);
   if (asUrl) return asUrl;
-  // Else DuckDuckGo Lite search
-  return `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(q)}`;
+  // Use html.duckduckgo which is more resilient on low-end and less captcha than lite
+  return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
 }
 
 export function looksLikeUrl(input) {
