@@ -197,7 +197,11 @@ export async function parseHTML(html, baseUrl) {
         const href=el.getAttribute("href")||el.getAttribute("formaction");
         const resolved=href? resolveHref(href, effectiveBase):null;
         if(resolved) pushNode({ type:"paragraph", inline:[{type:"link", text, href:resolved, id:linkId++, style}], style });
-        else pushNode({ type:"button", text, color: style.fg, style });
+        else {
+          // Make button focusable via cursor - assign linkId even without href
+          const btnId = linkId++;
+          pushNode({ type:"button", text, color: style.fg, style, id: btnId, href: resolved || null });
+        }
         break;
       }
       case "ul": case "ol": {

@@ -274,8 +274,13 @@ export function createUI({ onNavigate, onQuit } = {}) {
   screen.key(["enter"], () => {
     if (screen.focused === topBar) return;
     const link = links[cursorIdx];
-    if (link && onNavigate) onNavigate(link.href);
+    if (link) {
+      if (link.href) onNavigate(link.href);
+      else setStatus(`Button: ${link.text} (no link)`, "yellow");
+    }
   });
+  screen.key(["tab"], () => moveCursor(1));
+  screen.key(["S-tab"], () => moveCursor(-1));
 
   screen.key(["b", "escape"], () => {
     if (history.length && onNavigate) {

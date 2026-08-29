@@ -17,37 +17,36 @@ function styleToTags(style) {
 
 function styleOpen(p) {
   let s = "";
-  if (p.bold) s += "{bold}";
-  if (p.italic) s += "{italic}";
-  if (p.underline) s += "{underline}";
+  if (p.bold || p.style?.bold) s += "{bold}";
+  if (p.italic || p.style?.italic) s += "{italic}";
+  if (p.underline || p.style?.underline) s += "{underline}";
   if (p.code) s += "{green-fg}";
-  if (p.color) s += `{${p.color}-fg}`;
-  else if (p.style?.fg) s += `{${p.style.fg}-fg}`;
+  // Prefer style.fg over legacy color to avoid duplication
+  const fg = p.style?.fg || p.color;
+  if (fg) s += `{${fg}-fg}`;
   if (p.style?.bg) s += `{${p.style.bg}-bg}`;
-  if (p.style?.bold) s += "{bold}";
-  if (p.style?.italic) s += "{italic}";
-  if (p.style?.underline) s += "{underline}";
   return s;
 }
 function styleClose(p) {
   let s = "";
-  if (p.style?.underline) s += "{/underline}";
-  if (p.style?.italic) s += "{/italic}";
-  if (p.style?.bold) s += "{/bold}";
   if (p.style?.bg) s += `{/${p.style.bg}-bg}`;
-  if (p.color) s += `{/${p.color}-fg}`;
-  else if (p.style?.fg) s += `{/${p.style.fg}-fg}`;
-  if (p.underline) s += "{/underline}";
-  if (p.italic) s += "{/italic}";
-  if (p.bold) s += "{/bold}";
+  const fg = p.style?.fg || p.color;
+  if (fg) s += `{/${fg}-fg}`;
   if (p.code) s += "{/green-fg}";
+  if (p.underline || p.style?.underline) s += "{/underline}";
+  if (p.italic || p.style?.italic) s += "{/italic}";
+  if (p.bold || p.style?.bold) s += "{/bold}";
   return s;
 }
 
 function linkTags(isFocused, p) {
-  if (isFocused) return { open: "{inverse}{yellow-fg}{bold}", close: "{/bold}{/yellow-fg}{/inverse}" };
-  // Honor style but default cyan
-  const fg = p.style?.fg || p.color || "cyan";
+  if (isFocused) {
+    // High contrast cursor: yellow bg black fg bold + inverse for visibility on any bg
+    return { open: "{yellow-bg}{black-fg}{bold}", close: "{/bold}{/black-fg}{/yellow-bg}" };
+  }
+  // Use site's actual color if available, otherwise pleasant blue
+  const fg = p.style?.fg || p.color || "#1a73e8";
+  // Ensure we use hex if provided, blessed will match to nearest
   return { open: `{underline}{${fg}-fg}`, close: `{/${fg}-fg}{/underline}` };
 }
 
@@ -93,7 +92,8 @@ function wrapInline(inline, width, cursorId) {
   if (targetId !== -999 && targetId !== -1 && targetId !== undefined) {
     const idx = linkLineMap.get(targetId);
     if (idx!==undefined && idx < lines.length) {
-      lines[idx] = `{inverse}{yellow-fg}{bold} ▸ {/yellow-fg}{/bold}{/inverse} ` + lines[idx];
+      // Bright cursor indicator - yellow bg black fg for high contrast
+      lines[idx] = `{yellow-bg}{black-fg}{bold} ▶ {/black-fg}{/bold}{/yellow-bg} ` + lines[idx];
     }
   }
   const links=[];
@@ -144,9 +144,10 @@ export function renderContent(nodes, { width = 80, cursorId = -1, useCursorIndex
   const globalOrderedIds=[]; const seenGlobal=new Set();
   for(const n of nodes){
     if(n.inline) for(const p of n.inline) if(p.type==="link"&&!seenGlobal.has(p.id)){ seenGlobal.add(p.id); globalOrderedIds.push(p.id);}
+    if(n.type==="button" && n.id != null && !seenGlobal.has(n.id)){ seenGlobal.add(n.id); globalOrderedIds.push(n.id); }
     if(n.type==="form" && n.inputs) {
       for(const inp of n.inputs) {
-        // forms have no links but preserve?
+        // forms have no links but preserve? Could make inputs focusable in future
       }
     }
   }
@@ -356,15 +357,12 @@ export function renderContent(nodes, { width = 80, cursorId = -1, useCursorIndex
           const marginBottom = style.margin ? style.margin[2] : 0;
           for(let i=0;i<marginTop;i++) pushEmpty();
           const {lines:wLines, links:lns}=wrapInline(node.inline.slice(isStoryCard?1:0), w, globalTargetId);
-          const bgOpen = style.bg ? `{${style.bg}-bg}` : "";
-          const bgClose = style.bg ? `{/${style.bg}-bg}` : "";
-          const fgOpen = style.fg ? `{${style.fg}-fg}` : "";
-          const fgClose = style.fg ? `{/${style.fg}-fg}` : "";
           for(const l of wLines){
             let out = l;
-            // Apply bg/fg for paragraph block
-            if(style.bg || style.fg){
-              out = `${bgOpen}${fgOpen}${l}${fgClose}${bgClose}`;
+            // Do not double-apply block fg/bg if inline already has it (avoid {#ff0000-fg}{#ff0000-fg})
+            // Only apply block bg if not already handled per-word and needed for card background
+            if(style.bg && !l.includes(`${style.bg}-bg`)){
+              out = `{${style.bg}-bg}` + out + `{/${style.bg}-bg}`;
             }
             // Apply textAlign
             if(style.align==="center"){
@@ -599,10 +597,18 @@ export function renderContent(nodes, { width = 80, cursorId = -1, useCursorIndex
       }
       case "button": {
         const txt=escapeBlessed(node.text);
-        const bg = style.bg || "blue";
-        const fg = style.fg || "white";
-        const borderColor = style.border?.color || fg;
-        push(`  {${bg}-bg}{${fg}-fg}  ${txt}  {/${fg}-fg}{/${bg}-bg} {gray-fg}[button]{/gray-fg}`);
+        const isFocused = node.id != null && node.id === globalTargetId;
+        const base=lineIndex;
+        if (isFocused) {
+          push(`{yellow-bg}{black-fg}{bold} ▶ {/black-fg}{/bold}{/yellow-bg} {yellow-bg}{black-fg}{bold}  ${txt}  {/black-fg}{/bold}{/yellow-bg} {gray-fg}[button]{/gray-fg}`);
+          links.push({ id: node.id, href: node.href || null, text: node.text, line: base });
+        } else {
+          const bg = style.bg || "#3b82f6";
+          const fg = style.fg || "white";
+          push(`  {${bg}-bg}{${fg}-fg}  ${txt}  {/${fg}-fg}{/${bg}-bg} {gray-fg}[button]{/gray-fg}`);
+          // Still make button navigable even when not focused
+          if (node.id != null) links.push({ id: node.id, href: node.href || null, text: node.text, line: base });
+        }
         pushEmpty();
         break;
       }
