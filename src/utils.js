@@ -115,43 +115,73 @@ function hslToHex(h, s, l) {
   return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
 }
 
+let blessedColors = null;
+function getBlessedPalette() {
+  if (blessedColors) return blessedColors;
+  blessedColors = [];
+  const xterm = ['#000000','#cd0000','#00cd00','#cdcd00','#0000ee','#cd00cd','#00cdcd','#e5e5e5','#7f7f7f','#ff0000','#00ff00','#ffff00','#5c5cff','#ff00ff','#00ffff','#ffffff'];
+  for(let i=0;i<16;i++) {
+    const hex=xterm[i];
+    const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+    blessedColors.push([r,g,b]);
+  }
+  for(let r=0;r<6;r++) for(let g=0;g<6;g++) for(let b=0;b<6;b++) {
+    blessedColors.push([r?r*40+55:0, g?g*40+55:0, b?b*40+55:0]);
+  }
+  for(let g=0;g<24;g++){ const l=g*10+8; blessedColors.push([l,l,l]); }
+  return blessedColors;
+}
+function hexToBlessedIndex(hex) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  const palette=getBlessedPalette();
+  let best=0, bestDist=Infinity;
+  for(let i=0;i<palette.length;i++){
+    const [pr,pg,pb]=palette[i];
+    const d=Math.pow(30*(r-pr),2)+Math.pow(59*(g-pg),2)+Math.pow(11*(b-pb),2);
+    if(d<bestDist){ bestDist=d; best=i; }
+  }
+  return String(best);
+}
+
 export function cssColorToBlessed(color) {
   if (!color) return null;
   color = color.trim().toLowerCase();
   if (color === "transparent" || color === "currentcolor" || color === "inherit" || color === "initial" || color === "unset") return null;
-  // Handle hex
+  let hex=null;
   if (color.startsWith("#")) {
-    let hex = color;
-    // Handle 3,4,6,8 digit hex
+    hex=color;
     if (/^#[0-9a-f]{3}$/.test(hex)) hex = "#" + hex[1]+hex[1]+hex[2]+hex[2]+hex[3]+hex[3];
-    else if (/^#[0-9a-f]{4}$/.test(hex)) hex = "#" + hex[1]+hex[1]+hex[2]+hex[2]+hex[3]+hex[3]; // ignore alpha
-    else if (/^#[0-9a-f]{8}$/.test(hex)) hex = hex.slice(0,7); // ignore alpha
-    if (/^#[0-9a-f]{6}$/.test(hex)) return hex;
-    return null;
-  }
-  if (color.startsWith("rgb")) {
+    else if (/^#[0-9a-f]{4}$/.test(hex)) hex = "#" + hex[1]+hex[1]+hex[2]+hex[2]+hex[3]+hex[3];
+    else if (/^#[0-9a-f]{8}$/.test(hex)) hex = hex.slice(0,7);
+    if (!/^#[0-9a-f]{6}$/.test(hex)) return null;
+  } else if (color.startsWith("rgb")) {
     const nums = color.match(/[\d.]+/g);
     if (nums && nums.length >= 3) {
       const [r,g,b] = nums.map(n=> Math.max(0, Math.min(255, Math.round(parseFloat(n)))));
-      return `#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
+      hex=`#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
     }
-  }
-  if (color.startsWith("hsl")) {
+  } else if (color.startsWith("hsl")) {
     const nums = color.match(/[\d.]+/g);
     if (nums && nums.length >= 3) {
       const h = parseFloat(nums[0]) % 360;
       const s = parseFloat(nums[1]);
       const l = parseFloat(nums[2]);
-      return hslToHex(h,s,l);
+      hex=hslToHex(h,s,l);
     }
+  } else if (cssNamedToHex[color] !== undefined) {
+    hex=cssNamedToHex[color];
+    if(!hex) return null;
+  } else if (/^[0-9a-f]{6}$/.test(color)) hex=`#${color}`;
+  if(!hex) return null;
+  // Return 256 index for blessed to use via {256-fg} etc. But blessed tags expect name or number
+  // We return the index as string, which blessed will handle via colors.convert
+  // However for true hex support, we can return hex and let blessed's program handle via match
+  // But to avoid cache poisoning, we return the index directly
+  try {
+    return hexToBlessedIndex(hex);
+  } catch {
+    return hex;
   }
-  // Named color
-  if (cssNamedToHex[color] !== undefined) {
-    return cssNamedToHex[color]; // may be null for transparent etc.
-  }
-  // Already a hex-like without #? e.g. "ff0000"
-  if (/^[0-9a-f]{6}$/.test(color)) return `#${color}`;
-  return null;
 }
 
 export function extractInlineColor(styleAttr) {
